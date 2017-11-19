@@ -2,6 +2,8 @@
 
 AI_SHADER_NODE_EXPORT_METHODS(GNHair);
 
+//Ç‚Ç¡ÇΩÇ∫ÅB
+
 unsigned int LutgenThreadFunc(void* data)
 {
 	LutgenThreadData* td = (LutgenThreadData*)data;
