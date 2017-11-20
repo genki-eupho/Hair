@@ -1,7 +1,7 @@
 import pymel.core as pm
 from alShaders import *
 
-class AEGNHairTemplate(GNShadersTemplate):
+class AEGNHairTemplate(alShadersTemplate):
 	controls = {}
 	params = {}
 	def setup(self):
