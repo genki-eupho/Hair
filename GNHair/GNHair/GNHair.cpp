@@ -27,7 +27,20 @@ unsigned int LutgenThreadFunc(void* data)
 node_parameters
 {
 	AiParameterRGB("dyeColor", 1.0f, 1.0f, 1.0f);
-	AiParameterFlt("melanin", 0.15f);
+
+
+	////////////////////////////////////////////
+	// yhHair parameters
+	AiParameterFlt("eumelanin", 0.15f);
+	AiParameterFlt("pheomelanin", 0.15f);
+	AiParameterFlt("bleachingtime", 0.0f);
+	AiParameterFlt("thickness", 0.08f);
+	AiParameterFlt("temperature", 20.0f);
+	////////////////////////////////////////////
+	////////////////////////////////////////////
+
+
+
 	AiParameterFlt("specularShift", 4.0f);
 	AiParameterFlt("specularWidth", 3.0f);
 	AiParameterInt("extraSamplesDiffuse", 0);

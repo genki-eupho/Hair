@@ -13,7 +13,7 @@
 	houdini.parm.heading.h0 STRING "Randomize"
 	houdini.parm.heading.h1 STRING "Advanced"
 	houdini.order STRING " ROOT"
-	houdini.order2 STRING " melanin dyeColor specularWidth specularShift opacity h0 randomTangent randomMelanin randomHue randomSaturation h1 glintRolloff transmissionRolloff"
+	houdini.order2 STRING " eumelanin pheomelanin bleachingtime thickness temperature dyeColor specularWidth specularShift opacity h0 randomTangent randomMelanin randomHue randomSaturation h1 glintRolloff transmissionRolloff"
 	houdini.order3 STRING " diffuseStrength diffuseColor diffuseScatteringMode diffuseForward diffuseBack"
 	houdini.order4 STRING " specular1Strength specular1Color specular1WidthScale specular1Shift"
 	houdini.order5 STRING " specular2Strength specular2Color specular2WidthScale specular2Shift glintStrength"
@@ -22,11 +22,35 @@
 	houdini.order8 STRING " crypto_asset_override crypto_object_override crypto_material_override aov_diffuse_color aov_direct_diffuse aov_indirect_diffuse aov_direct_local aov_indirect_local aov_direct_global aov_indirect_global aov_direct_specular aov_indirect_specular aov_light_group_1 aov_light_group_2 aov_light_group_3 aov_light_group_4 aov_light_group_5 aov_light_group_6 aov_light_group_7 aov_light_group_8 aov_id_1 aov_id_2 aov_id_3 aov_id_4 aov_id_5 aov_id_6 aov_id_7 aov_id_8 aov_crypto_asset aov_crypto_object aov_crypto_material"
 	houdini.order9 STRING " dualDepth diffuseIndirectStrength extraSamplesDiffuse glossyIndirectStrength extraSamplesGlossy uparam vparam"
 
-	[attr melanin]
-		houdini.label STRING "Melanin"
+	[attr eumelanin]
+		houdini.label STRING "EuMelanin"
 		min FLOAT 0
 		max FLOAT 1
 		desc STRING "The melanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.8 brown and 0.8-1.0 black hair. If you want to set the color of the hair with a texture map, set this to 0 and use the Dye color parameter."
+		linkable BOOL TRUE
+	[attr pheomelanin]
+		houdini.label STRING "PheoMelanin"
+		min FLOAT 0
+		max FLOAT 1
+		desc STRING "The pheomelanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.8 brown and 0.8-1.0 black hair. If you want to set the color of the hair with a texture map, set this to 0 and use the Dye color parameter."
+		linkable BOOL TRUE
+	[attr bleachingtime]
+		houdini.label STRING "BleachingTime"
+		min FLOAT -1
+		max FLOAT 60
+		desc STRING "Hair bleaching time. This varies melanin parameters based on chemical experiment results. Variation of melanin parameters is affected by "
+		linkable BOOL TRUE
+	[attr thickness]
+		houdini.label STRING "Thickness"
+		min FLOAT 0.01
+		max FLOAT 0.2
+		desc STRING "hair fiber thickness"
+		linkable BOOL TRUE
+	[attr temperature]
+		houdini.label STRING "Temperature"
+		min FLOAT 0
+		max FLOAT 50
+		desc STRING "bleaching temperature"
 		linkable BOOL TRUE
 	[attr dyeColor]
 		houdini.label STRING "Dye color"

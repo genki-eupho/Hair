@@ -36,7 +36,19 @@
 enum GNHairParams
 {
 	p_dyeColor,
-	p_melanin,
+
+	//////////////////////////////
+	// yhHair param
+	p_eumelanin,
+	p_pheomelanin,
+	p_bleachingtime,
+	p_thickness,
+	p_temperature,
+	//////////////////////////////
+	//////////////////////////////
+	
+
+
 	p_specularShift,
 	p_specularWidth,
 	p_extraSamplesDiffuse,
@@ -531,14 +543,34 @@ struct HairBsdf
 		AB(theta_r, sp.alpha_R, sp.beta_R*B_WIDTH_SCALE, A_b, B_b);
 		AB(theta_r, sp.alpha_TT, sp.beta_TT*F_WIDTH_SCALE, A_f, B_f);
 
+
+
+
+
+
+
+
+		////////////////////////////////////////////////////////////////////
+
 		AtRGB dyeColor = clamp(AiShaderEvalParamRGB(p_dyeColor), AI_RGB_BLACK, AI_RGB_WHITE);
-		float melanin = AiShaderEvalParamFlt(p_melanin);
-		opacity = AiShaderEvalParamFlt(p_opacity);
+		float eumelanin = AiShaderEvalParamFlt(p_eumelanin);
+		float pheomelanin = AiShaderEvalParamFlt(p_pheomelanin);
+		
+		float bt = AiShaderEvalParamFlt(p_bleachingtime);
+
 
 		float randomHue = AiShaderEvalParamFlt(p_randomHue) * 0.1f;
 		float randomSaturation = AiShaderEvalParamFlt(p_randomSaturation);
 		float randomMelanin = AiShaderEvalParamFlt(p_randomMelanin);
-		melanin = CLAMP(melanin + randomMelanin*cv.z, 0.0f, 1.0f);
+		
+		
+		eumelanin = CLAMP(eumelanin + randomMelanin*cv.z, 0.0f, 1.0f);
+		pheomelanin = CLAMP(pheomelanin + randomMelanin*cv.z, 0.0f, 1.0f);
+
+
+		if (bt >= 0)
+			eumelanin = -0.066 * log(bt) + 0.533;
+
 
 		if (randomHue != 0.0f || randomSaturation != 0.0f)
 		{
@@ -550,11 +582,20 @@ struct HairBsdf
 			dyeColor = hsv2rgb(dyeColor);
 		}
 
-		float m = MAX(powf(melanin, 2.0f)*33.0f, 1.0e-2f);
-		hairColor = exp(m * -rgb(0.187f, 0.4f, 1.05f));
+		float em = MAX(powf(eumelanin, 2.0f)*33.0f, 1.0e-2f);
+		float pm = MAX(powf(pheomelanin, 2.0f)*33.0f, 1.0e-2f);
+
+		hairColor = exp(em * -rgb(0.419f, 0.697f,1.37f) + pm * -rgb(0.187, 0.4f, 1.05f));
 		hairColor *= dyeColor;
 
 		sp.hairColor = hairColor;
+
+
+		///////////////////////////////////////////////////
+
+
+
+
 
 		sp.absorption = -log(hairColor);
 		sp.dabsorption = -log(hairColor);

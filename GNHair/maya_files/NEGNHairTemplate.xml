@@ -4,8 +4,20 @@
 		<attribute name="outColor" type="maya.float3">
 		<label>Out Color</label>
 </attribute>
-		<attribute name="melanin" type="maya.float">
-			<label>Melanin</label>
+		<attribute name="eumelanin" type="maya.float">
+			<label>EuMelanin</label>
+		</attribute>
+		<arrribute name="pheomelanin", type="maya.float">
+			<label>PheoMelanin</label>
+		</attribute>
+		<arrribute name="bleachingtime", type="maya.float">
+			<label>BleachingTime</label>
+		</attribute>
+		<arrribute name="thickness", type="maya.float">
+			<label>Thickness</label>
+		</attribute>
+		<arrribute name="temperature", type="maya.float">
+			<label>Temperature</label>
 		</attribute>
 		<attribute name="dyeColor" type="maya.float3">
 			<label>Dye color</label>

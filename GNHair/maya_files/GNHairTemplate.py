@@ -1,12 +1,16 @@
 import pymel.core as pm
 from alShaders import *
 
-class AEGNHairTemplate(alShadersTemplate):
+class AEGNHairTemplate(GNShadersTemplate):
 	controls = {}
 	params = {}
 	def setup(self):
 		self.params.clear()
-		self.params["melanin"] = Param("melanin", "Melanin", "The melanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.8 brown and 0.", "float", presets=None)
+		self.params["eumelanin"] = Param("eumelanin", "EuMelanin", "The eumelanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.8 brown and 0.", "float", presets=None)
+		self.params["pheomelanin"] = Param("pheomelanin", "PheoMelanin", "The pheomelanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.", "float", presets=None)
+		self.params["bleachingtime"] = Param("bleachingtime", "BleachingTime", "Hair bleaching time. This varies melanin parameters based on chemical experiment results. Variation of melanin parameters is affected by ", "float", presets=None)
+		self.params["thickness"] = Param("thickness", "Thickness", "hair fiber thickness", "float", presets=None)
+		self.params["temperature"] = Param("temperature", "Temperature", "bleaching temperature", "float", presets=None)
 		self.params["dyeColor"] = Param("dyeColor", "Dye color", "Color tint to apply to the hair. You can also plug a MayaRamp in here to define the color along the lenght of the hair.", "rgb", presets=None)
 		self.params["specularWidth"] = Param("specularWidth", "Highlight width", "The width of the hair highlights, essentially how shiny the hair appears. Values in the range 1-7 are sensible for human hair.", "float", presets=None)
 		self.params["specularShift"] = Param("specularShift", "Highlight shift", "How much the highlights are shifted along the hair by the cuticles on the hair fibre. Generally this wants to be 1 to 1.5 times the value of the Width parameter.", "float", presets=None)
@@ -86,7 +90,11 @@ class AEGNHairTemplate(alShadersTemplate):
 		self.beginScrollLayout()
 
 		self.beginLayout("Fibre properties", collapse=False)
-		self.addCustomFlt("melanin")
+		self.addCustomFlt("eumelanin")
+		self.addCustomFlt("pheomelanin")
+		self.addCustomFlt("bleachingtime")
+		self.addCustomFlt("thickness")
+		self.addCustomFlt("temperature")
 		self.addCustomRgb("dyeColor")
 		self.addCustomFlt("specularWidth")
 		self.addCustomFlt("specularShift")

@@ -1,6 +1,10 @@
 <args format="1.0">
 <page name="Fibre properties">
-	<param name="melanin" label="Melanin"/>
+	<param name="eumelanin" label="EuMelanin"/>
+	<param name="pheomelanin" label="PheoMelanin"/>
+	<param name="bleachingtime" label=BleachingTime"/>
+	<param name="thickness" label="Thickness"/>
+	<param name="temperature" label="Temperature"/>
 	<param name="dyeColor" label="Dye color" widget="color"/>
 	<param name="specularWidth" label="Highlight width"/>
 	<param name="specularShift" label="Highlight shift"/>
