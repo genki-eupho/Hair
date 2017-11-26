@@ -323,7 +323,7 @@
 		<view name="Lookdev" template="AEGNHair">
 			<group name="Fibreproperties">
 				<label>Fibre properties</label>
-				<property name="melanin"/>
+				<property name="eumelanin"/>
 				<property name="pheomelanin"/>
 				<property name="bleachingtime"/>
 				<property name="thickness"/>

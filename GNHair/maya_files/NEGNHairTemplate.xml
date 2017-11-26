@@ -91,7 +91,7 @@
 	</template>
 		<view name="NEDefault" template="NEGNHair">
 		<property name="outColor" />
-		<property name="melanin" />
+		<property name="eumelanin" />
 		<property name="pheomelanin"/>
 		<property name="bleachingtime"/>
 		<property name="thickness"/>
