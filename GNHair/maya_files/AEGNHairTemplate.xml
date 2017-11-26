@@ -324,6 +324,10 @@
 			<group name="Fibreproperties">
 				<label>Fibre properties</label>
 				<property name="melanin"/>
+				<property name="pheomelanin"/>
+				<property name="bleachingtime"/>
+				<property name="thickness"/>
+				<property name="temperature"/>
 				<property name="dyeColor"/>
 				<property name="specularWidth"/>
 				<property name="specularShift"/>

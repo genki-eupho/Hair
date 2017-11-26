@@ -92,6 +92,10 @@
 		<view name="NEDefault" template="NEGNHair">
 		<property name="outColor" />
 		<property name="melanin" />
+		<property name="pheomelanin"/>
+		<property name="bleachingtime"/>
+		<property name="thickness"/>
+		<property name="temperature"/>
 		<property name="dyeColor" />
 		<property name="diffuseStrength" />
 		<property name="diffuseColor" />
