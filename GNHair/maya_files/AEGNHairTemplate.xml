@@ -4,11 +4,11 @@
 		<label>GNHair</label>
 		<description>Create believable hair shading with a plausible direct lighting model and approximate multiple scattering. The scattering from a hair fibre is a complex interaction of multiple lobes, often referred to in the literature as R, TT and TRT. Those related to the Specular 1, Transmission and Specular 2 lobes, respectively. The Diffuse lobe represents multiple scattering between hair fibres.</description>
 		<attribute name="eumelanin" type="maya.float">
-			<label>EuMelanin</label>
+			<label>Eumelanin</label>
 			<description>The eumelanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.8 brown and 0.</description>
 		</attribute>
 		<attribute name="pheomelanin" type="maya.float">
-			<label>PheoMelanin</label>
+			<label>Pheomelanin</label>
 			<description>The pheomelanin content of the hair fibre. Use this to generated natural colors for mammalian hair. 0 will give white hair, 0.2-04 blonde, 0.4-0.6 red, 0.6-0.</description>
 		</attribute>
 		<attribute name="bleachingtime" type="maya.float">

@@ -5,10 +5,10 @@
 		<label>Out Color</label>
 </attribute>
 		<attribute name="eumelanin" type="maya.float">
-			<label>EuMelanin</label>
+			<label>Eumelanin</label>
 		</attribute>
 		<arrribute name="pheomelanin", type="maya.float">
-			<label>PheoMelanin</label>
+			<label>Pheomelanin</label>
 		</attribute>
 		<arrribute name="bleachingtime", type="maya.float">
 			<label>BleachingTime</label>
@@ -92,10 +92,10 @@
 		<view name="NEDefault" template="NEGNHair">
 		<property name="outColor" />
 		<property name="eumelanin" />
-		<property name="pheomelanin"/>
-		<property name="bleachingtime"/>
-		<property name="thickness"/>
-		<property name="temperature"/>
+		<property name="pheomelanin" />
+		<property name="bleachingtime" />
+		<property name="thickness" />
+		<property name="temperature" />
 		<property name="dyeColor" />
 		<property name="diffuseStrength" />
 		<property name="diffuseColor" />
