@@ -1,0 +1,1410 @@
+#include "GNHair.h"
+
+struct HairBsdf
+{
+	struct ShaderData
+	{
+		ShaderData()
+			: sampler_glossy(NULL), sampler_diffuse(NULL), ds(NULL)
+		{
+			_last_sp.shape = -1.0f;
+			_last_sp.ior = 0.0f;
+		}
+
+		~ShaderData()
+		{
+			AiSamplerDestroy(sampler_glossy);
+			AiSamplerDestroy(sampler_diffuse);
+			delete ds;
+		}
+
+		void update(AtParamValue* params)
+		{
+			AtNode *options = AiUniverseGetOptions();
+			int glossy_samples = std::max(0, AiNodeGetInt(options, "GI_glossy_samples") + params[p_extraSamplesGlossy].INT);
+			int diffuse_samples = std::max(0, AiNodeGetInt(options, "GI_diffuse_samples") + params[p_extraSamplesDiffuse].INT);
+
+			AiSamplerDestroy(sampler_glossy);
+			sampler_glossy = AiSampler(glossy_samples, 2);
+			AiSamplerDestroy(sampler_diffuse);
+			sampler_diffuse = AiSampler(diffuse_samples, 2);
+
+			alpha_R = -params[p_specularShift].FLT * AI_DTOR;
+			beta_R = params[p_specularWidth].FLT * AI_DTOR;
+
+			beta_TT = beta_R * 0.5f;
+
+			alpha_TT = -alpha_R * 0.5f;
+
+			beta_TRT = beta_R * 2.0f;
+			alpha_TRT = -alpha_R * 1.5f;
+
+			beta_R2 = beta_R*beta_R;
+			beta_TT2 = beta_TT*beta_TT;
+			beta_TRT2 = beta_TRT*beta_TRT;
+
+			gamma_TT = params[p_transmissionRolloff].FLT * AI_DTOR;
+			gamma_g = params[p_glintRolloff].FLT * AI_DTOR;
+
+			glintStrength = params[p_glintStrength].FLT;
+
+			dual_depth = params[p_dualDepth].INT;
+
+			sampleLobesIndividually = false;
+
+			uparam = params[p_uparam].STR;
+			vparam = params[p_vparam].STR;
+
+			aovs.clear();
+			aovs.push_back(params[p_aov_diffuse_color].STR);
+			aovs.push_back(params[p_aov_direct_diffuse].STR);
+			aovs.push_back(params[p_aov_indirect_diffuse].STR);
+			aovs.push_back(params[p_aov_direct_local].STR);
+			aovs.push_back(params[p_aov_indirect_local].STR);
+			aovs.push_back(params[p_aov_direct_global].STR);
+			aovs.push_back(params[p_aov_indirect_global].STR);
+			aovs.push_back(params[p_aov_direct_specular].STR);
+			aovs.push_back(params[p_aov_indirect_specular].STR);
+			aovs.push_back(params[p_aov_direct_specular_2].STR);
+			aovs.push_back(params[p_aov_indirect_specular_2].STR);
+			aovs.push_back(params[p_aov_direct_glint].STR);
+			aovs.push_back(params[p_aov_indirect_glint].STR);
+			aovs.push_back(params[p_aov_direct_transmission].STR);
+			aovs.push_back(params[p_aov_indirect_transmission].STR);
+			aovs.push_back(params[p_aov_depth].STR);
+			aovs.push_back(params[p_aov_light_group_1].STR);
+			aovs.push_back(params[p_aov_light_group_2].STR);
+			aovs.push_back(params[p_aov_light_group_3].STR);
+			aovs.push_back(params[p_aov_light_group_4].STR);
+			aovs.push_back(params[p_aov_light_group_5].STR);
+			aovs.push_back(params[p_aov_light_group_6].STR);
+			aovs.push_back(params[p_aov_light_group_7].STR);
+			aovs.push_back(params[p_aov_light_group_8].STR);
+			aovs.push_back(params[p_aov_light_group_9].STR);
+			aovs.push_back(params[p_aov_light_group_10].STR);
+			aovs.push_back(params[p_aov_light_group_11].STR);
+			aovs.push_back(params[p_aov_light_group_12].STR);
+			aovs.push_back(params[p_aov_light_group_13].STR);
+			aovs.push_back(params[p_aov_light_group_14].STR);
+			aovs.push_back(params[p_aov_light_group_15].STR);
+			aovs.push_back(params[p_aov_light_group_16].STR);
+			aovs.push_back(params[p_aov_id_1].STR);
+			aovs.push_back(params[p_aov_id_2].STR);
+			aovs.push_back(params[p_aov_id_3].STR);
+			aovs.push_back(params[p_aov_id_4].STR);
+			aovs.push_back(params[p_aov_id_5].STR);
+			aovs.push_back(params[p_aov_id_6].STR);
+			aovs.push_back(params[p_aov_id_7].STR);
+			aovs.push_back(params[p_aov_id_8].STR);
+			for (size_t i = 0; i < aovs.size(); ++i)
+				AiAOVRegister(aovs[i].c_str(), AI_TYPE_RGB, AI_AOV_BLEND_OPACITY);
+
+			// Only update dual scattering LUTs if we're actually using dual scattering
+			if (params[p_diffuseScatteringMode].INT == DUAL)
+			{
+				delete ds;
+				ds = new DualScattering;
+
+				ScatteringParams sp;
+				sp.alpha_R = alpha_R;
+				sp.beta_R = beta_R;
+				sp.beta_R2 = beta_R2;
+				sp.alpha_TT = alpha_TT;
+				sp.beta_TT = beta_TT;
+				sp.beta_TT2 = beta_TT2;
+				sp.alpha_TRT = alpha_TRT;
+				sp.beta_TRT = beta_TRT;
+				sp.beta_TRT2 = beta_TRT2;
+				sp.gamma_TT = gamma_TT;
+				sp.gamma_g = gamma_g;
+				sp.ior = 1.55f;
+				sp.phi_g = 35.0f;
+				sp.shape = 0.0f;
+#if 0
+				if (sp != _last_sp)
+				{
+					int num_threads = AiNodeGetInt(options, "threads");
+					LutgenThreadData* thread_data = new LutgenThreadData[num_threads];
+					void** threads = new void*[num_threads];
+
+					int chunk_size = (DS_MASTER_LUT_SZ / num_threads) + 1;
+					int start = 0;
+					float time = AiMsgUtilGetElapsedTime();
+					for (int i = 0; i < num_threads; ++i)
+					{
+						thread_data[i].ds = ds;
+						thread_data[i].sp = &sp;
+						thread_data[i].start = start;
+						thread_data[i].end = std::min(start + chunk_size, DS_MASTER_LUT_SZ);
+						start += chunk_size;
+						threads[i] = AiThreadCreate(LutgenThreadFunc, &thread_data[i], AI_PRIORITY_HIGH);
+					}
+
+					for (int i = 0; i < num_threads; ++i)
+					{
+						AiThreadWait(threads[i]);
+					}
+
+					delete[] thread_data;
+
+					time = AiMsgUtilGetElapsedTime() - time;
+					AiMsgInfo("[GNHair] lutgen time on %d threads: %.2fs", num_threads, time / 1000.0f);
+					_last_sp = sp;
+				}
+#endif
+			}
+		}
+
+		AtSampler* sampler_glossy;
+		AtSampler* sampler_diffuse;
+
+		int dual_depth;
+
+		float beta_R;       //< R width
+		float beta_R2;
+		float alpha_R;      //< R shift
+		float beta_TT;      //< TT width
+		float beta_TT2;
+		float alpha_TT;     //< TT shift
+		float beta_TRT;     //< TRT width
+		float beta_TRT2;
+		float alpha_TRT;    //< TRT shift
+		float gamma_TT;     //< TT rolloff
+		float gamma_g;      //< g rolloff
+		float phi_g;        //< g separation
+
+		float glintStrength;
+
+		bool sampleLobesIndividually;
+
+		DualScattering* ds;
+
+		std::vector<std::string> aovs;
+		std::map<AtNode*, int> lightGroups;
+
+		std::string uparam, vparam;
+
+		CryptomatteData* cryptomatte;
+		ScatteringParams _last_sp;
+	};
+
+	HairBsdf(AtNode* n, AtShaderGlobals* sg, ShaderData* d) :
+		numBlendHairs(2), density_front(0.7f), density_back(0.7f), node(n), data(d), _sg(sg)
+	{
+		depth = sg->Rr;
+
+		result_R_direct = AI_RGB_BLACK;
+		result_R_indirect = AI_RGB_BLACK;
+		result_TT_direct = AI_RGB_BLACK;
+		result_TT_indirect = AI_RGB_BLACK;
+		result_TRT_direct = AI_RGB_BLACK;
+		result_TRT_indirect = AI_RGB_BLACK;
+		result_TRTg_direct = AI_RGB_BLACK;
+		result_TRTg_indirect = AI_RGB_BLACK;
+		result_Pg_direct = AI_RGB_BLACK;
+		result_Pl_direct = AI_RGB_BLACK;
+		result_Pg_indirect = AI_RGB_BLACK;
+		result_Pl_indirect = AI_RGB_BLACK;
+		result_id1 = AI_RGB_BLACK;
+		result_id2 = AI_RGB_BLACK;
+		result_id3 = AI_RGB_BLACK;
+		result_id4 = AI_RGB_BLACK;
+		result_id5 = AI_RGB_BLACK;
+		result_id6 = AI_RGB_BLACK;
+		result_id7 = AI_RGB_BLACK;
+		result_id8 = AI_RGB_BLACK;
+
+
+		memset(lightGroupsDirect, 0, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+	}
+
+	/// Parameter evaluation. This should be called after opacity() and before anything else.
+	inline void evaluateParameters(AtShaderGlobals* sg, ShaderData* data)
+	{
+		// save uv coord 
+		float u = sg->u;
+		float v = sg->v;
+
+		// replace uvs
+		float s, t;
+		static const AtString maya_ramp_uv_override("maya_ramp_uv_override");
+		if (AiUDataGetFlt(data->uparam.c_str(), &s) && AiUDataGetFlt(data->vparam.c_str(), &t))
+		{
+			// set the hair u, v coords so other shaders (e.g. ramp) can use them
+			AtPoint2 hair_uv = AiPoint2(sg->u, sg->v);
+#if AI_VERSION_MINOR_NUM >= 6
+			AiStateSetMsgPnt2(maya_ramp_uv_override, hair_uv);
+#else
+			AiStateSetMsgPnt2("maya_ramp_uv_override", hair_uv);
+#endif
+
+			sg->u = s;
+			sg->v = t;
+
+		}
+
+
+		// Get a random value per curve
+		AtUInt32 curve_idi = 0;
+		int curve_idii = 0;
+		float curve_id = 0.0f;
+		cn = 1.0f;
+		AtVector cv = aivec(0.0f);
+		float randomTangent = AiShaderEvalParamFlt(p_randomTangent) * 0.3f;
+		if (AiUDataGetUInt("curve_id", &curve_idi))
+		{
+			AtPoint2 p; p.x = float(curve_idi); p.y = 0.0f;
+			cn = AiCellNoise2(p);
+
+			AtPoint p2 = aivec(float(curve_idi) + 17.0f, 0.0f, 0.0f);
+			cv = (AiVCellNoise3(p2)*2.0f - aivec(1.0f));
+		}
+		else if (AiUDataGetFlt("curve_id", &curve_id))
+		{
+			AtPoint2 p; p.x = curve_id; p.y = 0.0f;
+			cn = AiCellNoise2(p);
+
+			AtPoint p2 = aivec(curve_id + 17.0f, 0.0f, 0.0f);
+			cv = (AiVCellNoise3(p2)*2.0f - aivec(1.0f));
+
+		}
+		else if (AiUDataGetInt("curve_id", &curve_idii))
+		{
+			AtPoint2 p; p.x = float(curve_idii); p.y = 0.0f;
+			cn = AiCellNoise2(p);
+
+			AtPoint p2 = aivec(float(curve_idii) + 17.0f, 0.0f, 0.0f);
+			cv = (AiVCellNoise3(p2)*2.0f - aivec(1.0f));
+		}
+		else
+		{
+			cn = 0.5f;
+		}
+
+		// Get a local coordinate frame based on the hair fibre direction
+		U = AiV3Normalize(sg->dPdv + cv*randomTangent);
+		V = AiV3Cross(U, sg->N);
+		W = AiV3Cross(V, U);
+
+		// Get the spherical angles of the exitant direction relative to the hair fibre
+		wo = -sg->Rd;
+		theta_r = AI_PIOVER2 - sphericalTheta(wo, U);
+		phi_r = sphericalPhi(wo, V, W);
+
+		sp.beta_R = data->beta_R;
+		sp.alpha_R = data->alpha_R;
+		sp.alpha_R_offset = -AiShaderEvalParamFlt(p_specular1Shift) * AI_DTOR;
+
+		sp.beta_TT = data->beta_TT;
+		sp.alpha_TT = data->alpha_TT;
+		sp.alpha_TT_offset = -AiShaderEvalParamFlt(p_transmissionShift) * AI_DTOR;
+
+		sp.beta_TRT = data->beta_TRT;
+		sp.alpha_TRT = data->alpha_TRT;
+		sp.alpha_TRT_offset = -AiShaderEvalParamFlt(p_specular2Shift) * AI_DTOR;
+
+		sp.beta_R2 = data->beta_R2;
+		sp.beta_TT2 = data->beta_TT2;
+		sp.beta_TRT2 = data->beta_TRT2;
+
+		sp.gamma_TT = data->gamma_TT;
+		sp.gamma_g = data->gamma_g;
+
+		float glintAngleMin = 0.0f * AI_DTOR;
+		float glintAngleMax = 360.0f * AI_DTOR;
+
+		sp.phi_g = lerp(glintAngleMin, glintAngleMax, cn);
+
+		sp.ior = 1.55;
+
+		AB(theta_r, sp.alpha_R, sp.beta_R, A_R, B_R);
+		AB(theta_r, sp.alpha_TT, sp.beta_TT, A_TT, B_TT);
+		AB(theta_r, sp.alpha_TRT, sp.beta_TRT, A_TRT, B_TRT);
+		AB(theta_r, sp.alpha_R, sp.beta_R*B_WIDTH_SCALE, A_b, B_b);
+		AB(theta_r, sp.alpha_TT, sp.beta_TT*F_WIDTH_SCALE, A_f, B_f);
+
+
+
+
+
+
+
+
+		////////////////////////////////////////////////////////////////////
+
+		AtRGB dyeColor = clamp(AiShaderEvalParamRGB(p_dyeColor), AI_RGB_BLACK, AI_RGB_WHITE);
+		float eumelanin = AiShaderEvalParamFlt(p_eumelanin);
+		float pheomelanin = AiShaderEvalParamFlt(p_pheomelanin);
+
+		float bt = AiShaderEvalParamFlt(p_bleachingtime);
+
+
+		float randomHue = AiShaderEvalParamFlt(p_randomHue) * 0.1f;
+		float randomSaturation = AiShaderEvalParamFlt(p_randomSaturation);
+		float randomMelanin = AiShaderEvalParamFlt(p_randomMelanin);
+
+
+		eumelanin = CLAMP(eumelanin + randomMelanin*cv.z, 0.0f, 1.0f);
+		pheomelanin = CLAMP(pheomelanin + randomMelanin*cv.z, 0.0f, 1.0f);
+
+
+		if (bt >= 0)
+			eumelanin = -0.066 * log(bt) + 0.533;
+
+
+		if (randomHue != 0.0f || randomSaturation != 0.0f)
+		{
+			dyeColor = rgb2hsv(dyeColor);
+			dyeColor.r += cv.x * randomHue;
+			// dyeColor.r = clamp(-1.0f, 1.0f, dyeColor.r);
+			dyeColor.g += cv.y * randomSaturation;
+			dyeColor.g = clamp(0.0f, 1.0f, dyeColor.g);
+			dyeColor = hsv2rgb(dyeColor);
+		}
+
+		float em = MAX(powf(eumelanin, 2.0f)*33.0f, 1.0e-2f);
+		float pm = MAX(powf(pheomelanin, 2.0f)*33.0f, 1.0e-2f);
+
+		hairColor = exp(em * -rgb(0.419f, 0.697f, 1.37f) + pm * -rgb(0.187, 0.4f, 1.05f));
+		hairColor *= dyeColor;
+
+		sp.hairColor = hairColor;
+
+
+		///////////////////////////////////////////////////
+
+
+
+
+
+		sp.absorption = -log(hairColor);
+		sp.dabsorption = -log(hairColor);
+
+		diffuseColor = AiShaderEvalParamRGB(p_diffuseColor) * AiShaderEvalParamFlt(p_diffuseStrength);
+		diffuseScatteringMode = AiShaderEvalParamInt(p_diffuseScatteringMode);
+		specular1Color = AiShaderEvalParamRGB(p_specular1Color) * AiShaderEvalParamFlt(p_specular1Strength);
+		specular2Color = AiShaderEvalParamRGB(p_specular2Color) * AiShaderEvalParamFlt(p_specular2Strength);
+		transmissionColor = AiShaderEvalParamRGB(p_transmissionColor) * AiShaderEvalParamFlt(p_transmissionStrength);
+		glintStrength = AiShaderEvalParamFlt(p_glintStrength);
+
+		specular1WidthScale = AiShaderEvalParamFlt(p_specular1WidthScale);
+		specular2WidthScale = AiShaderEvalParamFlt(p_specular2WidthScale);
+		transmissionWidthScale = AiShaderEvalParamFlt(p_transmissionWidthScale);
+
+		diffuseIndirectStrength = AiShaderEvalParamFlt(p_diffuseIndirectStrength);
+		glossyIndirectStrength = AiShaderEvalParamFlt(p_glossyIndirectStrength);
+
+		density_front = AiShaderEvalParamFlt(p_densityFront);
+		density_back = AiShaderEvalParamFlt(p_densityBack);
+
+		if (density_back*maxh(diffuseColor) > IMPORTANCE_EPS && density_front*maxh(diffuseColor) > IMPORTANCE_EPS)
+			dualImportant = true;
+		else
+			dualImportant = false;
+
+		do_diffuse = do_glossy = true;
+		if (sg->Rr_diff > 0)
+		{
+			do_glossy = false;
+		}
+
+		hairColor *= diffuseColor;
+
+		doLightGroups = true;
+		if (sg->Rt & AI_RAY_CAMERA)
+		{
+			// if this is a camera ray allocate the group storage
+			deepGroupPtr = (AtRGB*)AiShaderGlobalsQuickAlloc(sg, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+			memset(deepGroupPtr, 0, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+			AiStateSetMsgPtr("als_deepGroupPtr", deepGroupPtr);
+		}
+		else
+		{
+			// secondary ray hit - get the pointer from the state
+			// if the pointer hasn't been set we're being called from a BSDF that doesn't have deep group support
+			// so don't try and do it or we'll be in (crashy) trouble!
+			if (!AiStateGetMsgPtr("als_deepGroupPtr", (void**)&deepGroupPtr)) deepGroupPtr = NULL;
+		}
+		if (deepGroupPtr)
+		{
+			memset(deepGroupsSpecular, 0, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+			memset(deepGroupsSpecular2, 0, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+			memset(deepGroupsDiffuse, 0, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+			memset(deepGroupsTransmission, 0, sizeof(AtRGB)*NUM_LIGHT_GROUPS);
+		}
+
+#if AI_VERSION_MINOR_NUM >= 8
+		AiStateUnsetMsgPnt2(maya_ramp_uv_override);
+#endif
+		// restore saved uv coords for hygiene
+		sg->u = u;
+		sg->v = v;
+	}
+
+	inline void AB(float theta_r, float alpha, float beta, float& A, float& B)
+	{
+		A = atanf((PIOVER4 + theta_r*0.5f - alpha) / beta);
+		B = atanf((-PIOVER4 + theta_r*0.5f - alpha) / beta);
+	}
+
+	inline float sampleLong(double u, float theta_r, float alpha, float beta, float A, float B)
+	{
+		float t = 2.0f*beta * tanf(u*(A - B) + B) + 2.0f*alpha - theta_r;
+		return t;//clamp( -0.4999f * AI_PI, 0.4999f * AI_PI, t); //< TODO: not handling the t == +/- AI_PIOVER2 case doesn't seem to hurt?
+	}
+
+	inline AtVector sample_R(float u1, float u2)
+	{
+		float theta_i = sampleLong(u1, theta_r, sp.alpha_R - sp.alpha_R_offset, sp.beta_R*specular1WidthScale, A_R, B_R);
+		float phi = 2.0f * asinf(clamp(2.0f*u2 - 1.0f, -1.0f, 1.0f));
+		float phi_i = phi_r - phi;
+		AtVector wi;
+		sphericalDirection(theta_i, phi_i, V, W, U, wi);
+		return wi;
+	}
+
+	inline AtRGB bsdf_R(const SctGeo& geo)
+	{
+		AtRGB result = rgb(bsdfR(sp.beta_R2*SQR(specular1WidthScale), sp.alpha_R - sp.alpha_R_offset, geo.theta_h, geo.cosphi2)) * geo.cos_theta_i * geo.inv_cos_theta_d2 * AI_ONEOVERPI;
+		assert(isValidColor(result));
+		return result;
+	}
+
+	inline float pdf_R(const SctGeo& geo)
+	{
+		float t = geo.theta_h - sp.alpha_R - sp.alpha_R_offset;
+		float pdf_theta = (1.0f / (2.0f*std::max(geo.cos_theta_i, 1e-7f)*(A_R - B_R))) * (sp.beta_R*specular1WidthScale / (t*t + sp.beta_R2*SQR(specular1WidthScale)));
+		float pdf_phi = geo.cosphi2*0.25f;
+		float pdf = pdf_theta * pdf_phi;
+		assert(isPositiveReal(pdf));
+		return pdf;
+	}
+
+	inline AtVector sample_TRT(float u1, float u2)
+	{
+		float theta_i = sampleLong(u1, theta_r, sp.alpha_TRT - sp.alpha_TRT_offset, sp.beta_TRT*specular2WidthScale, A_R, B_R);
+		float phi = 2.0f * asinf(clamp(2.0f*u2 - 1.0f, -1.0f, 1.0f));
+		float phi_i = phi_r - phi;
+		AtVector wi;
+		sphericalDirection(theta_i, phi_i, V, W, U, wi);
+		return wi;
+	}
+
+	inline AtRGB bsdf_TRT(const SctGeo& geo)
+	{
+		AtRGB result = rgb(bsdfR(sp.beta_TRT2*SQR(specular2WidthScale), sp.alpha_TRT - sp.alpha_TRT_offset, geo.theta_h, geo.cosphi2)) * geo.cos_theta_i * geo.inv_cos_theta_d2 * AI_ONEOVERPI;
+		assert(isValidColor(result));
+		return result;
+	}
+
+	inline float pdf_TRT(const SctGeo& geo)
+	{
+		float t = geo.theta_h - sp.alpha_TRT - sp.alpha_TRT_offset;
+		float pdf_theta = (1.0f / (2.0f*std::max(geo.cos_theta_i, 1e-7f)*(A_R - B_R))) * (sp.beta_TRT*specular2WidthScale / (t*t + sp.beta_TRT2*SQR(specular2WidthScale)));
+		float pdf_phi = geo.cosphi2*0.25f;
+		float pdf = pdf_theta * pdf_phi;
+		assert(isPositiveReal(pdf));
+		return pdf;
+	}
+
+	inline AtVector sample_TRTg(float u1, float u2)
+	{
+		float theta_i = sampleLong(u1, theta_r, sp.alpha_TRT - sp.alpha_TRT_offset, sp.beta_TRT*specular2WidthScale, A_TRT, B_TRT);
+		float sign;
+		if (u2 < 0.5f)
+		{
+			sign = 1.0f;
+			u2 = 2.0f * u2;
+		}
+		else
+		{
+			sign = -1.0f;
+			u2 = 2.0f * (1.0f - u2);
+		}
+		Cg = atanf((AI_PIOVER2 - sp.phi_g) / sp.gamma_g);
+		Dg = atanf(-sp.phi_g / sp.gamma_g);
+		float phi = sp.gamma_g * tanf(u2*(Cg - Dg) + Dg) + sp.phi_g;
+		phi *= sign;
+		float phi_i = phi_r + phi;
+
+		AtVector wi;
+		sphericalDirection(theta_i, phi_i, V, W, U, wi);
+		return wi;
+	}
+
+	inline AtRGB bsdf_TRTg(const SctGeo& geo)
+	{
+		AtRGB result = rgb(bsdfg(sp.beta_TRT2*SQR(specular2WidthScale), sp.alpha_TRT - sp.alpha_TRT_offset, geo.theta_h, sp.gamma_g, geo.phi, sp.phi_g)) * geo.cos_theta_i * geo.inv_cos_theta_d2 * AI_ONEOVERPI;
+		assert(isValidColor(result));
+		return result;
+	}
+
+	inline float pdf_TRTg(const SctGeo& geo)
+	{
+		float t = geo.theta_h - sp.alpha_TRT - sp.alpha_TRT_offset;
+		float pdf_theta = (1.0f / (2.0f*std::max(geo.cos_theta_i, 1e-7f)*(A_TRT - B_TRT))) * (sp.beta_TRT*specular2WidthScale / (t*t + sp.beta_TRT2*SQR(specular2WidthScale)));
+		float p = fabsf(geo.phi) - sp.phi_g;
+		float Cg = atanf((AI_PIOVER2 - sp.phi_g) / sp.gamma_g);
+		float Dg = atanf(-sp.phi_g / sp.gamma_g);
+		float pdf_phi = (1.0f / (2.0f * (Cg - Dg))) * (sp.gamma_g / (p*p + sp.gamma_g*sp.gamma_g));
+		float pdf = pdf_theta * pdf_phi;
+		assert(isPositiveReal(pdf));
+		return pdf;
+	}
+
+	inline AtVector sample_TT(float u1, float u2)
+	{
+		float theta_i = sampleLong(u1, theta_r, sp.alpha_TT - sp.alpha_TT_offset, sp.beta_TT*transmissionWidthScale, A_TT, B_TT);
+		C_TT = 2.0f * atanf(AI_PI / sp.gamma_TT);
+		float phi = sp.gamma_TT * tanf(C_TT * (u2 - 0.5f)) + AI_PI;
+		float phi_i = phi_r - phi;
+		AtVector wi;
+		sphericalDirection(theta_i, phi_i, V, W, U, wi);
+		return wi;
+	}
+
+	inline AtRGB bsdf_TT(const SctGeo& geo)
+	{
+		AtRGB result = rgb(bsdfTT(sp.beta_TT2*SQR(transmissionWidthScale), sp.alpha_TT - sp.alpha_TT_offset, geo.theta_h, sp.gamma_TT, geo.phi_d)) * geo.cos_theta_i * geo.inv_cos_theta_d2 * AI_ONEOVERPI;
+		assert(isValidColor(result));
+		return result;
+	}
+
+	inline float pdf_TT(const SctGeo& geo)
+	{
+		float t = geo.theta_h - sp.alpha_TT - sp.alpha_TT_offset;
+		float pdf_theta = (1.0f / (2.0f*std::max(geo.cos_theta_i, 1e-7f)*(A_TT - B_TT))) * (sp.beta_TT*transmissionWidthScale / (t*t + sp.beta_TT2*SQR(transmissionWidthScale)));
+		float p = geo.phi - AI_PI;
+		float C_TT = 2.0f * atanf(AI_PI / sp.gamma_TT);
+		float pdf_phi = (1.0f / C_TT) * (sp.gamma_TT / (p*p + sp.gamma_TT*sp.gamma_TT));
+
+		float pdf = pdf_theta * pdf_phi;
+		assert(isPositiveReal(pdf));
+		return pdf;
+	}
+
+	inline AtVector sample_Sb(float u1, float u2)
+	{
+		float theta_i = sampleLong(u1, theta_r, sp.alpha_R, sp.beta_R*B_WIDTH_SCALE, A_b, B_b);
+		float phi = 2.0f * asinf(clamp(2.0f*u2 - 1.0f, -1.0f, 1.0f));
+		float phi_i = phi_r - phi;
+		AtVector wi;
+		sphericalDirection(theta_i, phi_i, V, W, U, wi);
+		return wi;
+	}
+
+	inline float pdf_Sb(const SctGeo& geo)
+	{
+		float t = geo.theta_h - sp.alpha_R*B_WIDTH_SCALE;
+		float pdf_theta = (1.0f / (2.0f*std::max(geo.cos_theta_i, 1e-7f)*(A_b - B_b))) * (sp.beta_R*B_WIDTH_SCALE / (t*t + sp.beta_R2*B_WIDTH_SCALE*B_WIDTH_SCALE));
+		float pdf_phi = geo.cosphi2*0.25f;
+		float pdf = pdf_theta * pdf_phi;
+		assert(isPositiveReal(pdf));
+		return pdf;
+	}
+
+	inline AtVector sample_Sf(float u1, float u2)
+	{
+		float theta_i = sampleLong(u1, theta_r, sp.alpha_TT, sp.beta_TT*F_WIDTH_SCALE, A_f, B_f);
+		C_TT = 2.0f * atanf(AI_PI / (sp.gamma_TT*F_WIDTH_SCALE));
+		float phi = sp.gamma_TT*F_WIDTH_SCALE * tanf(C_TT * (u2 - 0.5f)) + AI_PI;
+		float phi_i = phi_r - phi;
+		AtVector wi;
+		sphericalDirection(theta_i, phi_i, V, W, U, wi);
+		return wi;
+	}
+
+	inline float pdf_Sf(const SctGeo& geo)
+	{
+		float t = geo.theta_h - sp.alpha_TT;
+		float pdf_theta = (1.0f / (2.0f*std::max(geo.cos_theta_i, 1e-7f)*(A_f - B_f))) * (sp.beta_TT*F_WIDTH_SCALE / (t*t + sp.beta_TT2*F_WIDTH_SCALE*F_WIDTH_SCALE));
+		float p = geo.phi - AI_PI;
+		float C_TT = 2.0f * atanf(AI_PI / (sp.gamma_TT*F_WIDTH_SCALE));
+		float pdf_phi = (1.0f / C_TT) * (sp.gamma_TT*F_WIDTH_SCALE / (p*p + sp.gamma_TT*sp.gamma_TT*F_WIDTH_SCALE*F_WIDTH_SCALE));
+
+		float pdf = pdf_theta * pdf_phi;
+		assert(isPositiveReal(pdf));
+		return pdf;
+	}
+
+	static AtVector Hair_Sample_R(const void* brdf_data, float u1, float u2)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		return hb->sample_R(u1, u2);
+	}
+
+	static AtVector Hair_Sample_TT(const void* brdf_data, float u1, float u2)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		return hb->sample_TT(u1, u2);
+	}
+
+	static AtVector Hair_Sample_TRT(const void* brdf_data, float u1, float u2)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		return hb->sample_TRT(u1, u2);
+	}
+
+	static AtVector Hair_Sample_TRTg(const void* brdf_data, float u1, float u2)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		return hb->sample_TRTg(u1, u2);
+	}
+
+	static AtRGB Hair_Bsdf_R(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		AtRGB kfr[3];
+		hairAttenuation(hb->sp.ior, geo.theta_d, geo.phi_d, hb->sp.absorption, kfr);
+		return hb->bsdf_R(geo) * kfr[0] * hb->specular1Color;
+	}
+	static AtRGB Hair_Bsdf_TT(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		AtRGB kfr[3];
+		hairAttenuation(hb->sp.ior, geo.theta_d, geo.phi_d, hb->sp.absorption, kfr);
+		return hb->bsdf_TT(geo) * kfr[1] * hb->transmissionColor;
+	}
+	static AtRGB Hair_Bsdf_TRT(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		AtRGB kfr[3];
+		hairAttenuation(hb->sp.ior, geo.theta_d, geo.phi_d, hb->sp.absorption, kfr);
+		return hb->bsdf_TRT(geo) * kfr[2] * hb->specular2Color;
+	}
+	static AtRGB Hair_Bsdf_TRTg(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		AtRGB kfr[3];
+		hairAttenuation(hb->sp.ior, geo.theta_d, geo.phi_d, hb->sp.absorption, kfr);
+		return hb->bsdf_TRTg(geo) * kfr[2] * hb->specular2Color * hb->glintStrength;
+	}
+
+	static AtRGB HairGlossyBsdf(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		AtRGB result = AI_RGB_BLACK;
+
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+
+		AtRGB kfr[3];
+		hairAttenuation(hb->sp.ior, geo.theta_d, geo.phi_d, hb->sp.absorption, kfr);
+
+		AtRGB f_R = hb->do_glossy ? hb->bsdf_R(geo) * kfr[0] * hb->specular1Color : AI_RGB_BLACK;
+		AtRGB f_TT = hb->do_glossy ? hb->bsdf_TT(geo) * kfr[1] * hb->transmissionColor : AI_RGB_BLACK;
+		AtRGB f_TRT = hb->do_glossy ? hb->bsdf_TRT(geo) * kfr[2] * hb->specular2Color : AI_RGB_BLACK;
+		AtRGB f_TRTg = hb->do_glossy ? hb->bsdf_TRTg(geo) * kfr[2] * hb->specular2Color * hb->glintStrength : AI_RGB_BLACK;
+
+		assert(isValidColor(f_R));
+		assert(isValidColor(f_TT));
+		assert(isValidColor(f_TRT));
+		assert(isValidColor(f_TRTg));
+
+		return f_R + f_TT + f_TRT + f_TRTg;
+	}
+
+	static AtVector HairGlossySample(const void* brdf_data, float u1, float u2)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		hb->is_bsdf_sample = true;
+		if (u1 < 0.5f && u2 < 0.5f)
+		{
+			u1 *= 2.0f;
+			u2 *= 2.0f;
+			return hb->sample_R(u1, u2);
+		}
+		else if (u1 < 0.5f && u2 >= 0.5f)
+		{
+			u1 *= 2.0f;
+			u2 = 2.0f * (1.0f - u2);
+			return hb->sample_TT(u1, u2);
+		}
+		else if (u1 >= 0.5f && u2 < 0.5f)
+		{
+			u1 = 2.0f * (1.0f - u1);
+			u2 *= 2.0f;
+			return hb->sample_TRT(u1, u2);
+		}
+		else
+		{
+			u2 = 2.0f * (1.0f - u1);
+			u2 = 2.0f * (1.0f - u2);
+			return hb->sample_TRTg(u1, u2);
+		}
+
+
+	}
+
+	static float HairGlossyPdf(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+
+		float p = (hb->pdf_R(geo) + hb->pdf_TT(geo) + hb->pdf_TRT(geo) + hb->pdf_TRTg(geo))*0.25f;
+		assert(isPositiveReal(p));
+
+		return p;
+	}
+
+	static float Hair_Pdf_R(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		return hb->pdf_R(geo);
+	}
+
+	static float Hair_Pdf_TT(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		return hb->pdf_TT(geo);
+	}
+
+	static float Hair_Pdf_TRT(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		return hb->pdf_TRT(geo);
+	}
+
+	static float Hair_Pdf_TRTg(const void* brdf_data, const AtVector* wi)
+	{
+		HairBsdf* hb = (HairBsdf*)brdf_data;
+		SctGeo geo(*wi, hb->theta_r, hb->phi_r, hb->U, hb->V, hb->W);
+		return hb->pdf_TRTg(geo);
+	}
+
+	/// Integrate the direct illumination for all diffuse and glossy lobes
+	inline void integrateDirectMis(AtShaderGlobals* sg)
+	{
+		// Tell Arnold we want the full sphere for lighting.
+		sg->fhemi = false;
+
+		if (do_glossy)
+		{
+
+			//sg->skip_shadow = true;
+			AiLightsPrepare(sg);
+
+			while (AiLightsGetSample(sg))
+			{
+				// per-light specular and diffuse strength multipliers
+				float specular_strength = AiLightGetSpecular(sg->Lp);
+				if (specular_strength < IMPORTANCE_EPS) continue;
+
+				// get the group assigned to this light from the hash table using the light's pointer
+				int lightGroup = data->lightGroups[sg->Lp];
+
+				is_bsdf_sample = false;
+				pdf_bb = pdf_lb = 0.0f;
+				AtRGB f = AiEvaluateLightSample(sg, this, HairGlossySample, HairGlossyBsdf, HairGlossyPdf);
+
+				// mesh lights return infinite PDFs?
+				if (!AiIsFinite(pdf_ll) || !AiIsFinite(pdf_lb)) continue;
+
+				result_R_direct += f * specular_strength;
+				assert(isValidColor(result_R_direct));
+				assert(isValidColor(result_TT_direct));
+				assert(isValidColor(result_TRT_direct));
+				assert(isValidColor(result_TRTg_direct));
+
+				//// if the light is assigned a valid group number, add this sample's contribution to that light group
+				if (lightGroup >= 0 && lightGroup < NUM_LIGHT_GROUPS)
+				{
+					lightGroupsDirect[lightGroup] += f * specular_strength;
+				}
+			}
+
+		}
+
+		if (do_diffuse)
+		{
+			AiLightsPrepare(sg);
+			while (AiLightsGetSample(sg))
+			{
+				// per-light specular and diffuse strength multipliers
+				float diffuse_strength = AiLightGetDiffuse(sg->Lp);
+				if (diffuse_strength < IMPORTANCE_EPS) continue;
+
+				// get the group assigned to this light from the hash table using the light's pointer
+				int lightGroup = data->lightGroups[sg->Lp];
+
+				float cos_theta_i = AiV3Dot(U, sg->Ld);
+				float sin_theta_i = sqrtf(MAX(1.0f - SQR(cos_theta_i), 0.0f));
+
+				AtRGB L = sg->Li * sg->we * diffuse_strength * sin_theta_i * hairColor * (1.0f / (4 * AI_PI));
+				assert(isValidColor(L));
+				result_Pl_direct += L;
+
+				// if the light is assigned a valid group number, add this sample's contribution to that light group
+				if (lightGroup >= 0 && lightGroup < NUM_LIGHT_GROUPS)
+				{
+					lightGroupsDirect[lightGroup] += L;
+				}
+			}
+		}
+
+		sg->fhemi = true;
+	}
+
+	inline void integrateDirectDualMis(AtShaderGlobals* sg)
+	{
+		float als_hairNumIntersections = 0;
+		AtRGB T_f = AI_RGB_BLACK;
+		AtRGB als_hairOpacity = AI_RGB_WHITE;
+		AtRGB sigma_f = AI_RGB_BLACK;
+		bool old_hemi = sg->fhemi;
+		sg->fhemi = false;
+		AiLightsPrepare(sg);
+		AtRay ray;
+		AtScrSample scrs;
+		float directFraction;
+		AtRGB occlusion;
+		AtRGB F_direct;
+		AtRGB F_scatter;
+
+		AtRGB kfr[3];
+
+		if (do_glossy)
+		{
+
+			AiLightsPrepare(sg);
+
+			while (AiLightsGetSample(sg))
+			{
+				// per-light specular and diffuse strength multipliers
+				float specular_strength = AiLightGetSpecular(sg->Lp);
+				if (specular_strength < IMPORTANCE_EPS) continue;
+
+				// get the group assigned to this light from the hash table using the light's pointer
+				int lightGroup = data->lightGroups[sg->Lp];
+
+				is_bsdf_sample = false;
+				pdf_bb = pdf_lb = 0.0f;
+				AtRGB f = AiEvaluateLightSample(sg, this, HairGlossySample, HairGlossyBsdf, HairGlossyPdf);
+
+				// mesh lights return infinite PDFs?
+				if (!AiIsFinite(pdf_ll) || !AiIsFinite(pdf_lb)) continue;
+
+				result_R_direct += f * specular_strength;
+				assert(isValidColor(result_R_direct));
+				assert(isValidColor(result_TT_direct));
+				assert(isValidColor(result_TRT_direct));
+				assert(isValidColor(result_TRTg_direct));
+
+				//// if the light is assigned a valid group number, add this sample's contribution to that light group
+				if (lightGroup >= 0 && lightGroup < NUM_LIGHT_GROUPS)
+				{
+					lightGroupsDirect[lightGroup] += f * specular_strength;
+				}
+			}
+
+		}
+
+		if (do_diffuse)
+		{
+			bool old_skipshadow = sg->skip_shadow;
+			sg->skip_shadow = true;
+			AiLightsPrepare(sg);
+			while (AiLightsGetSample(sg))
+			{
+				// per-light specular and diffuse strength multipliers
+				float diffuse_strength = AiLightGetDiffuse(sg->Lp);
+				if (diffuse_strength < IMPORTANCE_EPS) continue;
+
+				// get the group assigned to this light from the hash table using the light's pointer
+				int lightGroup = data->lightGroups[sg->Lp];
+				SctGeo geo_l(sg->Ld, theta_r, phi_r, U, V, W);
+
+				AiStateSetMsgInt("als_raytype", ALS_RAY_DUAL);
+				AiStateSetMsgFlt("als_hairNumIntersections", 0);
+				AiStateSetMsgRGB("als_T_f", AI_RGB_WHITE);
+				AiStateSetMsgRGB("als_hairOpacity", AI_RGB_WHITE);
+				AiStateSetMsgRGB("als_sigma_bar_f", AI_RGB_BLACK);
+				AiMakeRay(&ray, AI_RAY_SHADOW, &(sg->P), &sg->Ld, sg->Ldist, sg);
+				AiTrace(&ray, &scrs);
+				AiStateGetMsgFlt("als_hairNumIntersections", &als_hairNumIntersections);
+				AiStateGetMsgRGB("als_T_f", &T_f);
+				AiStateGetMsgRGB("als_hairOpacity", &als_hairOpacity);
+				AiStateGetMsgRGB("als_sigma_bar_f", &sigma_f);
+
+				directFraction = 1.0f - std::min(als_hairNumIntersections, float(numBlendHairs)) / float(numBlendHairs);
+				occlusion = AI_RGB_WHITE - scrs.opacity;
+
+				T_f = pow(data->ds->forward_attenuation(sp, geo_l.theta_i), als_hairNumIntersections);
+				assert(AiIsFinite(T_f));
+				F_direct = directFraction * density_back*data->ds->f_back_direct(sp, geo_l); //< do f_s_direct separately for AOVs
+				F_scatter = (1.0f - directFraction) * T_f * density_front * (data->ds->f_s_scatter(sp, geo_l, sigma_f) + AI_PI * density_back * data->ds->f_back_scatter(sp, geo_l, sigma_f));
+
+				assert(isValidColor(F_direct));
+				assert(isValidColor(F_scatter));
+
+				AtRGB L = sg->Li * sg->we * occlusion * diffuse_strength;
+				AtRGB f_Pl = L * F_direct * geo_l.cos_theta_i * AI_ONEOVERPI * diffuseColor;
+				AtRGB f_Pg = L * F_scatter * geo_l.cos_theta_i * AI_ONEOVERPI * diffuseColor;
+				result_Pl_direct += f_Pl;
+				result_Pg_direct += f_Pg;
+
+				// if the light is assigned a valid group number, add this sample's contribution to that light group
+				if (lightGroup >= 0 && lightGroup < NUM_LIGHT_GROUPS)
+				{
+					lightGroupsDirect[lightGroup] += f_Pl + f_Pg;
+				}
+			}
+			sg->skip_shadow = old_skipshadow;
+		}
+
+		AiStateSetMsgInt("als_raytype", ALS_RAY_UNDEFINED);
+
+
+		sg->fhemi = old_hemi;
+
+	}
+
+	/// Integrate the indirect illumination for all diffuse and glossy lobes
+	inline void integrateIndirect(AtShaderGlobals* sg)
+	{
+		if (do_glossy && glossyIndirectStrength > 0.0f)
+		{
+			AiMakeRay(&wi_ray, AI_RAY_GLOSSY, &sg->P, NULL, AI_BIG, sg);
+
+			sampit = AiSamplerIterator(data->sampler_glossy, sg);
+			AiStateSetMsgInt("als_raytype", ALS_RAY_HAIR);
+			while (AiSamplerGetSample(sampit, samples))
+			{
+				wi_ray.dir = HairGlossySample(this, samples[0], samples[1]);
+
+				AtScrSample scrs;
+
+				// trace our ray
+				bool hit = AiTrace(&wi_ray, &scrs);
+				// calculate result
+				const float p = HairGlossyPdf(this, &wi_ray.dir);
+				const AtRGB f_R = Hair_Bsdf_R(this, &wi_ray.dir) / p;
+				const AtRGB f_TT = Hair_Bsdf_TT(this, &wi_ray.dir) / p;
+				const AtRGB f_TRT = Hair_Bsdf_TRT(this, &wi_ray.dir) / p;
+				const AtRGB f_TRTg = Hair_Bsdf_TRTg(this, &wi_ray.dir) / p;
+				result_R_indirect += scrs.color * (f_R + f_TT + f_TRT + f_TRTg) * AI_ONEOVERPI;
+
+				if (deepGroupPtr && hit)
+				{
+					for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+					{
+						deepGroupsSpecular[i] += deepGroupPtr[i] * (f_R + f_TT + f_TRT + f_TRTg) * AI_ONEOVERPI;
+					}
+				}
+			}
+			AiStateSetMsgInt("als_raytype", ALS_RAY_UNDEFINED);
+			float weight = AiSamplerGetSampleInvCount(sampit) * glossyIndirectStrength;
+			result_R_indirect *= weight;
+
+			if (deepGroupPtr)
+			{
+				for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+				{
+					deepGroupsSpecular[i] *= weight;
+					//deepGroupsSpecular2[i] *= weight;
+					//deepGroupsTransmission[i] *= weight;
+				}
+			}
+		}
+
+		if (diffuseIndirectStrength > 0.0f)
+		{
+			// result_Pl_indirect = AiIndirectDiffuse(&wo, sg) * hairColor * diffuseIndirectStrength;
+			AtRay wi_ray;
+			AtVector wi;
+			AtScrSample scrs;
+			AiMakeRay(&wi_ray, AI_RAY_DIFFUSE, &sg->P, NULL, AI_BIG, sg);
+			sampit = AiSamplerIterator(data->sampler_diffuse, sg);
+			result_Pl_indirect = AI_RGB_BLACK;
+			while (AiSamplerGetSample(sampit, samples))
+			{
+				// cosine hemisphere sampling as O-N sampling does not work outside of a light loop
+				float stheta = sqrtf(float(samples[0]));
+				float phi = float(AI_PITIMES2 * samples[1]);
+				wi.x = stheta * cosf(phi);
+				wi.y = stheta * sinf(phi);
+				wi.z = sqrtf(1.0f - float(samples[0]));
+				AiV3RotateToFrame(wi, U, V, sg->Nf);
+
+				float cos_theta = AiV3Dot(wi, sg->Nf);
+				if (cos_theta <= 0.0f) continue;
+
+				// trace the ray
+				wi_ray.dir = wi;
+
+				bool hit = AiTrace(&wi_ray, &scrs);
+
+				result_Pl_indirect += scrs.color * hairColor * diffuseIndirectStrength;
+				assert(isValidColor(result_Pl_indirect));
+				if (deepGroupPtr && hit)
+				{
+					for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+					{
+						deepGroupsDiffuse[i] += deepGroupPtr[i] * hairColor * diffuseIndirectStrength;
+					}
+				}
+
+			}
+			result_Pl_indirect *= AiSamplerGetSampleInvCount(sampit);
+			if (deepGroupPtr)
+			{
+				for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+				{
+					deepGroupsDiffuse[i] *= AiSamplerGetSampleInvCount(sampit);
+				}
+			}
+		}
+	}
+
+	inline void integrateIndirectDual(AtShaderGlobals* sg)
+	{
+		AiMakeRay(&wi_ray, AI_RAY_GLOSSY, &sg->P, NULL, AI_BIG, sg);
+		float weight;
+
+		bool do_glossy = true;
+		if (sg->Rt & AI_RAY_DIFFUSE || sg->Rr > 0) do_glossy = false;
+
+		if (do_glossy && glossyIndirectStrength > 0.0f)
+		{
+			AiStateSetMsgInt("als_raytype", ALS_RAY_HAIR);
+			sampit = AiSamplerIterator(data->sampler_glossy, sg);
+			while (AiSamplerGetSample(sampit, samples))
+			{
+				wi_ray.dir = HairGlossySample(this, samples[0], samples[1]);
+
+				AtScrSample scrs;
+
+				// trace our ray
+				AiStateSetMsgFlt("alsPreviousRoughness", 1.0f);
+				// trace our ray
+				bool hit = AiTrace(&wi_ray, &scrs);
+				// calculate result
+				const float p = HairGlossyPdf(this, &wi_ray.dir);
+				const AtRGB f_R = Hair_Bsdf_R(this, &wi_ray.dir) / p;
+				const AtRGB f_TT = Hair_Bsdf_TT(this, &wi_ray.dir) / p;
+				const AtRGB f_TRT = Hair_Bsdf_TRT(this, &wi_ray.dir) / p;
+				const AtRGB f_TRTg = Hair_Bsdf_TRTg(this, &wi_ray.dir) / p;
+				result_R_indirect += scrs.color * (f_R + f_TT + f_TRT + f_TRTg) * AI_ONEOVERPI;
+				//result_TT_indirect += scrs.color * f_TT;
+				//result_TRT_indirect += scrs.color * f_TRT;
+				//result_TRTg_indirect += scrs.color * f_TRTg;
+
+				if (deepGroupPtr && hit)
+				{
+					for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+					{
+						deepGroupsSpecular[i] += deepGroupPtr[i] * (f_R + f_TT + f_TRT + f_TRTg) * AI_ONEOVERPI;
+						//deepGroupsSpecular[i] += deepGroupPtr[i] * f_R;
+						//deepGroupsSpecular2[i] += deepGroupPtr[i] * (f_TRT + f_TRTg);
+						//deepGroupsTransmission[i] += deepGroupPtr[i] * f_TT;
+					}
+				}
+			}
+			AiStateSetMsgInt("als_raytype", ALS_RAY_UNDEFINED);
+			weight = AiSamplerGetSampleInvCount(sampit) * glossyIndirectStrength;
+			result_R_indirect *= weight;
+
+			if (deepGroupPtr)
+			{
+				for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+				{
+					deepGroupsSpecular[i] *= weight;
+					//deepGroupsSpecular2[i] *= weight;
+					//deepGroupsTransmission[i] *= weight;
+				}
+			}
+		}
+
+		if (diffuseIndirectStrength > 0.0f)
+		{
+			float als_hairNumIntersections = 0;
+			AtRGB T_f = AI_RGB_BLACK;
+			AtRGB als_hairOpacity = AI_RGB_WHITE;
+			AtRGB sigma_f = AI_RGB_BLACK;
+			sampit = AiSamplerIterator(data->sampler_diffuse, sg);
+			AiStateSetMsgInt("als_raytype", ALS_RAY_DUAL);
+			while (AiSamplerGetSample(sampit, samples))
+			{
+				if (samples[0] < 0.5f)
+				{
+					samples[0] *= 2.0f;
+					wi_ray.dir = sample_Sb(samples[0], samples[1]);
+				}
+				else
+				{
+					samples[0] = 1.0f - (2.0f * samples[0]);
+					wi_ray.dir = sample_Sf(samples[0], samples[1]);
+				}
+
+				SctGeo geo(wi_ray.dir, theta_r, phi_r, U, V, W);
+
+				// float p = 1.0f / ((pdf_Sf(geo) + pdf_Sb(geo)) * 0.5f);
+
+				AiStateSetMsgFlt("als_hairNumIntersections", 0);
+				AiStateSetMsgRGB("als_T_f", AI_RGB_WHITE);
+				AiStateSetMsgRGB("als_hairOpacity", AI_RGB_WHITE);
+				AiStateSetMsgRGB("als_sigma_bar_f", AI_RGB_BLACK);
+				AiStateSetMsgFlt("alsPreviousRoughness", 1.0f);
+				bool als_hitHair = false;
+				AiStateSetMsgBool("als_hitHair", als_hitHair);
+				bool hit = AiTrace(&wi_ray, &scrs);
+				AiStateGetMsgFlt("als_hairNumIntersections", &als_hairNumIntersections);
+				AiStateGetMsgRGB("als_T_f", &T_f);
+				AiStateGetMsgRGB("als_hairOpacity", &als_hairOpacity);
+				AiStateGetMsgRGB("als_sigma_bar_f", &sigma_f);
+
+				float directFraction = 1.0f - std::min(als_hairNumIntersections, float(numBlendHairs)) / float(numBlendHairs);
+				// AtRGB occlusion = AI_RGB_WHITE - scrs.opacity;
+
+				T_f = pow(data->ds->forward_attenuation(sp, geo.theta_i), als_hairNumIntersections);
+				assert(AiIsFinite(T_f));
+				AtRGB F_direct = directFraction * density_back*data->ds->f_back_direct(sp, geo); //< do f_s_direct separately for AOVs
+				AtRGB F_scatter = (1.0f - directFraction) * T_f * density_front *
+					(data->ds->f_s_scatter(sp, geo, sigma_f) + AI_PI * density_back * data->ds->f_back_scatter(sp, geo, sigma_f));
+
+				const AtRGB f_Pl = F_direct * geo.cos_theta_i * AI_ONEOVERPI;
+				const AtRGB f_Pg = F_scatter * geo.cos_theta_i * AI_ONEOVERPI;
+				result_Pl_indirect += scrs.color * f_Pl;
+				result_Pg_indirect += scrs.color * f_Pg;
+
+				// only accumulate deep groups if we hit something that wasn't a hair
+				if (deepGroupPtr && (hit && !als_hitHair))
+				{
+					for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+					{
+						deepGroupsDiffuse[i] += deepGroupPtr[i] * (f_Pl + f_Pg);
+					}
+				}
+
+			}
+			AiStateSetMsgInt("als_raytype", ALS_RAY_UNDEFINED);
+			weight = AiSamplerGetSampleInvCount(sampit) * diffuseIndirectStrength;
+			result_Pl_indirect *= weight * diffuseColor;
+			result_Pg_indirect *= weight * diffuseColor;
+
+			if (deepGroupPtr)
+			{
+				for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+				{
+					deepGroupsDiffuse[i] *= weight * diffuseColor;
+				}
+			}
+		}
+	}
+
+	inline void writeResult(AtShaderGlobals* sg)
+	{
+		if (deepGroupPtr)
+		{
+			for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+			{
+				deepGroupPtr[i] = lightGroupsDirect[i] + deepGroupsDiffuse[i] + deepGroupsSpecular[i];/*
+																									  + deepGroupsSpecular2[i] + deepGroupsTransmission[i];*/
+			}
+		}
+
+		if (sg->Rt & AI_RAY_CAMERA)
+		{
+			AiAOVSetRGB(sg, data->aovs[k_diffuse_color].c_str(), hairColor);
+			AiAOVSetRGB(sg, data->aovs[k_direct_diffuse].c_str(), result_Pg_direct + result_Pl_direct);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_diffuse].c_str(), result_Pg_indirect + result_Pl_indirect);
+			AiAOVSetRGB(sg, data->aovs[k_direct_specular].c_str(), result_R_direct);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_specular].c_str(), result_R_indirect);
+			AiAOVSetRGB(sg, data->aovs[k_direct_specular_2].c_str(), result_TRT_direct + result_TRTg_direct);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_specular_2].c_str(), result_TRT_indirect + result_TRTg_indirect);
+			AiAOVSetRGB(sg, data->aovs[k_direct_glint].c_str(), result_TRTg_direct);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_glint].c_str(), result_TRTg_indirect);
+			AiAOVSetRGB(sg, data->aovs[k_direct_transmission].c_str(), result_TT_direct);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_transmission].c_str(), result_TT_indirect);
+			AiAOVSetRGB(sg, data->aovs[k_direct_global].c_str(), result_Pg_direct);
+			AiAOVSetRGB(sg, data->aovs[k_direct_local].c_str(), result_Pl_direct);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_global].c_str(), result_Pg_indirect);
+			AiAOVSetRGB(sg, data->aovs[k_indirect_local].c_str(), result_Pl_indirect);
+
+			// write depth AOV
+			AtRGB depth = AiColorCreate(float(sg->Rl), AiV3Dot(sg->Nf, wo), sg->P.y);
+			AiAOVSetRGB(sg, data->aovs[k_depth].c_str(), depth);
+
+			assert(isValidColor(result_Pg_direct));
+			assert(isValidColor(result_Pg_indirect));
+			assert(isValidColor(result_Pl_direct));
+			assert(isValidColor(result_Pl_indirect));
+			assert(isValidColor(result_R_direct));
+			assert(isValidColor(result_R_indirect));
+			assert(isValidColor(result_TT_direct));
+			assert(isValidColor(result_TT_indirect));
+			assert(isValidColor(result_TRT_direct));
+			assert(isValidColor(result_TRT_indirect));
+			assert(isValidColor(result_TRTg_direct));
+			assert(isValidColor(result_TRTg_indirect));
+
+			for (int i = 0; i < NUM_ID_AOVS; ++i)
+			{
+				AtRGB tmp;
+				// check if output is enabled first in case we have an expensive network upstream
+				if (AiAOVEnabled(data->aovs[k_id_1 + i].c_str(), AI_TYPE_RGB))
+				{
+					tmp = AiShaderEvalParamRGB(p_id1 + i);
+
+					// check if we're overriding it with a per-object id
+					if (AiNodeLookUpUserParameter(sg->Op, id_names[i]))
+					{
+						tmp = AiNodeGetRGB(sg->Op, id_names[i]);
+					}
+
+
+					AiAOVSetRGB(sg, data->aovs[k_id_1 + i].c_str(), tmp);
+				}
+			}
+
+			for (int i = 0; i < NUM_LIGHT_GROUPS; ++i)
+			{
+				AiAOVSetRGB(sg, data->aovs[k_light_group_1 + i].c_str(), deepGroupPtr[i]);
+			}
+		}
+
+		sg->out.RGB = result_R_direct +
+			result_R_indirect +
+			result_TT_direct +
+			result_TT_indirect +
+			result_TRT_direct +
+			result_TRT_indirect +
+			result_TRTg_direct +
+			result_TRTg_indirect +
+			result_Pg_direct +
+			result_Pl_direct +
+			result_Pg_indirect +
+			result_Pl_indirect;
+		sg->out_opacity = AI_RGB_WHITE;
+	}
+
+	AtVector U, V, W;   //< local coordinate frame
+	float theta_r;      //< exitant spherical theta
+	float phi_r;        //< existant spherical phi
+	float cn;           //< random value per curve in [0,1)
+
+	ScatteringParams sp; //< varying scattering parameters
+
+	float diffuseStrength;
+	AtRGB diffuseColor;
+	int diffuseScatteringMode;
+	AtRGB hairColor;
+	AtRGB specular1Color;
+	AtRGB specular2Color;
+	AtRGB transmissionColor;
+	float glintStrength;
+	float diffuseIndirectStrength;
+	float glossyIndirectStrength;
+
+	float A_R;
+	float B_R;
+	float A_TT;
+	float B_TT;
+	float C_TT;
+	float A_TRT;
+	float B_TRT;
+	float Cg;
+	float Dg;
+
+	float A_f;
+	float A_b;
+	float B_f;
+	float B_b;
+
+	// dual-scattering parameters
+	int numBlendHairs;
+	float density_front;
+	float density_back;
+	float colorNorm;
+
+	AtRGB result_R_direct;
+	AtRGB result_R_indirect;
+	AtRGB result_TT_direct;
+	AtRGB result_TT_indirect;
+	AtRGB result_TRT_direct;
+	AtRGB result_TRT_indirect;
+	AtRGB result_TRTg_direct;
+	AtRGB result_TRTg_indirect;
+
+	// dual-scattering aovs
+	AtRGB result_Pg_direct;
+	AtRGB result_Pl_direct;
+	AtRGB result_Pg_indirect;
+	AtRGB result_Pl_indirect;
+
+	// IDs
+	AtRGB result_id1;
+	AtRGB result_id2;
+	AtRGB result_id3;
+	AtRGB result_id4;
+	AtRGB result_id5;
+	AtRGB result_id6;
+	AtRGB result_id7;
+	AtRGB result_id8;
+
+	bool do_diffuse;
+	bool do_glossy;
+
+	int depth;
+
+	AtNode* node;
+	ShaderData* data;
+	AtRay wi_ray;
+	AtScrSample scrs;
+#if AI_VERSION_MAJOR_NUM > 0
+	float samples[2];
+#else
+	double samples[2];
+#endif
+	AtSamplerIterator* sampit;
+
+	AtVector wo;
+
+	AtShaderGlobals* _sg;
+
+	float specular1WidthScale;
+	float specular2WidthScale;
+	float transmissionWidthScale;
+
+	bool dualImportant;
+
+	// MIS temporaries
+	// {
+	bool is_bsdf_sample;
+	AtRGB L_l;
+	AtRGB f_R_l;
+	AtRGB f_TT_l;
+	AtRGB f_TRT_l;
+	AtRGB f_TRTg_l;
+	float pdf_ll;
+	float pdf_lb;
+	float d_l;
+	AtVector w_l;
+	AtRGB L_b;
+	AtRGB f_R_b;
+	AtRGB f_TT_b;
+	AtRGB f_TRT_b;
+	AtRGB f_TRTg_b;
+	float pdf_bb;
+	float pdf_bl;
+	float d_b;
+	AtVector w_b;
+	// }
+
+	bool doLightGroups;
+	AtRGB lightGroupsDirect[NUM_LIGHT_GROUPS];
+	AtRGB* deepGroupPtr;
+	AtRGB deepGroupsSpecular[NUM_LIGHT_GROUPS];
+	AtRGB deepGroupsSpecular2[NUM_LIGHT_GROUPS];
+	AtRGB deepGroupsDiffuse[NUM_LIGHT_GROUPS];
+	AtRGB deepGroupsTransmission[NUM_LIGHT_GROUPS];
+
+	AtRGB opacity;
+};
