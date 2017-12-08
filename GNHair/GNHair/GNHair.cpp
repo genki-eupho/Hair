@@ -485,7 +485,7 @@ struct HairBsdf
 
 
 	
-		//if (bt >= 0) eumelanin = -0.066 * log(bt) + 0.533;
+		if (bt >= 0) eumelanin = -0.066 * log(bt) + eumelanin/*0.533*/;
 		
 
 
