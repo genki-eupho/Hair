@@ -484,8 +484,8 @@ struct HairBsdf
 		pheomelanin = CLAMP(pheomelanin + randomMelanin*cv.z, 0.0f, 1.0f);
 
 
-	
-		if (bt >= 0) eumelanin = -0.066 * log(bt) + eumelanin/*0.533*/;
+		
+		if (bt > 0) eumelanin = -0.066 * log(bt) + eumelanin/*0.533*/;
 		
 
 
@@ -507,6 +507,7 @@ struct HairBsdf
 		//float pm = MAX(powf(pheomelanin, 2.0f)*33.0f, 1.0e-2f);
 
 		hairColor = exp(em * -rgb(0.419f, 0.697f, 1.37f) + pm * -rgb(0.187, 0.4f, 1.05f));
+
 		hairColor *= dyeColor;
 
 		sp.hairColor = hairColor;
